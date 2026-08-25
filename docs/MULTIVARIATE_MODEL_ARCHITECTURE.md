@@ -5,6 +5,7 @@ Automotive Warranty Claims Forecasting System. This document is aligned with the
 **Primary sources:** `forecasting/models/*.py`, `forecasting/pipeline/runner.py`, `forecasting/data/loader.py`, `forecasting/metrics.py`, `forecasting/dashboard/app_ui.py`, `forecasting/config.py`.
 
 Companion Word export: [`MULTIVARIATE_MODEL_ARCHITECTURE.docx`](MULTIVARIATE_MODEL_ARCHITECTURE.docx)  
+**Univariate (Tab 3) architecture:** [`UNIVARIATE_MODEL_ARCHITECTURE.md`](UNIVARIATE_MODEL_ARCHITECTURE.md) · [`UNIVARIATE_MODEL_ARCHITECTURE.docx`](UNIVARIATE_MODEL_ARCHITECTURE.docx)  
 Diagrams: [`docs/diagrams/`](diagrams/).
 
 ---
@@ -24,7 +25,7 @@ Diagrams: [`docs/diagrams/`](diagrams/).
 
 **Not used:** XGBoost, LightGBM, Gradient Boosting (`MODEL_NAMES` in `forecasting/config.py`).
 
-Tab **3. Univariate Analysis** reuses the same NumPy classes with a **different** feature set (`UNI_FEATURE_COLS`). Those scores are **not** multivariate Tab 1 rankings.
+Tab **3. Univariate Analysis** reuses the same NumPy classes with a **different** feature set (`UNI_FEATURE_COLS`). Those scores are **not** multivariate Tab 1 rankings. Full Tab 3 architecture: [`UNIVARIATE_MODEL_ARCHITECTURE.md`](UNIVARIATE_MODEL_ARCHITECTURE.md).
 
 ---
 
@@ -361,7 +362,7 @@ Actual Gradio tabs (`app_ui.py`):
 |---|---|---|---|
 | **1** | Upload & Forecast | Upload, part, **model multi-select**, production/cost, CM, status (best model), history+forecast, 12-mo table, actual vs predicted, **ranking**, **HP**, CPV / claim-ratio history | Green load = schema OK. Ranking is leak-free OOS. Forecast is best (or only) model after CM. Every month needs **positive production** to train. |
 | **2** | Diagnostics | Production, vehicle age, odometer, **FCO/K × process heatmap**, rolling **CV** MAE, **model comparison** | Heatmap = manufacturing months driving claim months. CV = stability. Comparison matches Tab 1 metrics. |
-| **3** | Univariate Analysis | Claims-only Holt-Winters / SARIMA / DL | **Do not** treat as multivariate scores. |
+| **3** | Univariate Analysis | Claims-only Holt-Winters / SARIMA / CNN-LSTM / Transformer / N-BEATS — see univariate architecture doc | **Do not** treat as multivariate scores. |
 | **4** | Reduction | FCO/K picker, reduction %, original vs adjusted, monthly & cumulative reduction, share, CSV | What-if on selected batches over **36** warranty months. Needs a Tab 1 train. |
 | **5** | Annotated Walk-Forward | Last 6 months actual vs forecast; Error / Error% / Accuracy%; Keras optional; CSV | Stress-test feeding. Accuracy% = `1 − \|e\|/actual` when actual ≠ 0. Slow if many models. |
 | **6** | Summary & Export | KPIs, summary table, ranking, CSV, **PPTX** | PPT: ranking, economics, CM; univariate slides if Tab 3 was run. Chart images need `kaleido`. |

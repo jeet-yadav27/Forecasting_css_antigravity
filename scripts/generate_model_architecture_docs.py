@@ -15,6 +15,7 @@ from matplotlib.patches import FancyBboxPatch
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIAG_DIR = os.path.join(PROJECT_ROOT, "docs", "diagrams")
 DOCX_PATH = os.path.join(PROJECT_ROOT, "docs", "MULTIVARIATE_MODEL_ARCHITECTURE.docx")
+UNI_DOCX_PATH = os.path.join(PROJECT_ROOT, "docs", "UNIVARIATE_MODEL_ARCHITECTURE.docx")
 
 sys.path.insert(0, PROJECT_ROOT)
 
@@ -188,6 +189,76 @@ def generate_diagrams() -> dict[str, str]:
         height=5.2,
     )
     paths["ens"] = os.path.join(DIAG_DIR, "ensemble.png")
+
+    fig, ax = plt.subplots(figsize=(11.2, 6.6))
+    ax.set_xlim(0, 14)
+    ax.set_ylim(0, 8.2)
+    ax.axis("off")
+    ax.set_title(
+        "Univariate analysis pipeline (Tab 3)",
+        fontsize=13, fontweight="bold", color="#1a1a2e",
+    )
+    blocks = [
+        (0.2, 5.8, 3.2, 1.8, "Tab 1 claims  OR\nmonthly CSV\nPart / Month / Claims", "#E3F2FD"),
+        (3.7, 5.8, 3.4, 1.8, "Monthly claim_count\nno production required\nreindex gaps → 0", "#C8E6C9"),
+        (7.4, 5.8, 6.2, 1.8, "UNI_FEATURE_COLS from claims only\nlags, rolling mean/std, calendar,\nTrend_Index, Seasonality_Index", "#FFF9C4"),
+        (0.2, 3.2, 2.5, 1.9, "Holt-Winters\nadditive TES", "#FFE0B2"),
+        (2.9, 3.2, 2.5, 1.9, "SARIMA\nwider uni grid", "#DCEDC8"),
+        (5.6, 3.2, 2.5, 1.9, "CNN-LSTM\nepochs 12 / 22", "#D1C4E9"),
+        (8.3, 3.2, 2.5, 1.9, "Transformer\nepochs 12 / 22", "#B2DFDB"),
+        (11.0, 3.2, 2.6, 1.9, "N-BEATS\nepochs 12 / 22", "#F8BBD0"),
+        (1.2, 0.35, 5.4, 2.1, "1-step walk-forward\nrank by RMSE only", "#BBDEFB"),
+        (7.0, 0.35, 6.4, 2.1, "Refit 12-mo  +  95% CI\nbest model → Tab 3 UI / PPT", "#FFCCBC"),
+    ]
+    for x, y, w, h, t, c in blocks:
+        _box(ax, x, y, w, h, t, c, fontsize=7.8)
+    fig.tight_layout()
+    p = os.path.join(DIAG_DIR, "pipeline_univariate.png")
+    fig.savefig(p, dpi=160, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+    paths["uni_pipe"] = p
+
+    _stack_diagram(
+        os.path.join(DIAG_DIR, "holt_winters.png"),
+        "Holt-Winters — additive level / trend / season (Tab 3)",
+        [
+            ("Input  1-D claim_count  (no EXOG, no MinMax)", "#FFF8E1"),
+            ("Preprocess  seasonal_periods = min(12, n//2)  holdout last 3–6 mo", "#FFECB3"),
+            ("Level l_t   α-grid {0.1, 0.3, 0.5, 0.8}", "#FFE082"),
+            ("Trend b_t   β-grid {0.05, 0.2, 0.4}  additive", "#FFD54F"),
+            ("Season s_t  γ-grid {0.1, 0.3, 0.5} if n ≥ 2·sp else omitted", "#FFCA28"),
+            ("Output  ŷ = l + h·b + s  clip ≥ 0   σ from residuals", "#FFC107"),
+        ],
+    )
+    paths["hw"] = os.path.join(DIAG_DIR, "holt_winters.png")
+
+    _stack_diagram(
+        os.path.join(DIAG_DIR, "uni_features.png"),
+        "Univariate feature extraction (claims-derived only)",
+        [
+            ("Input  monthly claim_count + period calendar", "#E8EAF6"),
+            ("Lags  Lag_1, Lag_2, Lag_3, Lag_12  (bfill/ffill/0)", "#C5CAE9"),
+            ("Rolling  mean 3/6/12  std 3/6  (min_periods 1 or 2)", "#9FA8DA"),
+            ("Calendar  Month, Quarter, Year", "#7986CB"),
+            ("Trend_Index = 0..T-1    Seasonality_Index = month-mean / global-mean", "#5C6BC0"),
+            ("DL fusion  [scaled claims | scaled UNI feats] → (W, 15)", "#3F51B5"),
+        ],
+    )
+    paths["uni_feat"] = os.path.join(DIAG_DIR, "uni_features.png")
+
+    _stack_diagram(
+        os.path.join(DIAG_DIR, "uni_dl_runtime.png"),
+        "Tab 3 DL runtime vs Tab 1 (same classes, different wiring)",
+        [
+            ("Same nets  CnnLstmForecaster / TransformerForecaster / NBeatsForecaster", "#E0F7FA"),
+            ("F ≈ 15  (1 claim + 14 UNI_FEATURE_COLS)  not ~22 EXOG", "#B2EBF2"),
+            ("Lookback W = min(12, max(4, T//3))", "#80DEEA"),
+            ("CV  horizon=1  epochs=12   Refit  H≤12  epochs=22", "#4DD0E1"),
+            ("No HP grid  No inverse-MAE ensemble  Rank = lowest RMSE", "#26C6DA"),
+            ("Fail → last observed claim   pad short H with last step", "#00ACC1"),
+        ],
+    )
+    paths["uni_dl"] = os.path.join(DIAG_DIR, "uni_dl_runtime.png")
     return paths
 
 
@@ -213,7 +284,7 @@ def _code(doc, text):
 
 
 def _picture(doc, path, width=6.4):
-    if os.path.isfile(path):
+    if path and os.path.isfile(path):
         doc.add_picture(path, width=Inches(width))
         last = doc.paragraphs[-1]
         last.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -666,22 +737,173 @@ def build_docx(paths: dict[str, str]) -> None:
             ["forecasting/metrics.py", "RMSE/MAE/MAPE/R² rank"],
             ["forecasting/dashboard/app_ui.py", "Gradio tabs 1–6"],
             ["forecasting/config.py", "MODEL_NAMES, seeds, weights"],
+            ["forecasting/pipeline/univariate.py", "Tab 3 claims-only models (see univariate chapters)"],
         ],
     )
+
+    _add_univariate_chapters(doc, paths, heading_start=13)
 
     os.makedirs(os.path.dirname(DOCX_PATH), exist_ok=True)
     doc.save(DOCX_PATH)
     print("Wrote", DOCX_PATH)
 
 
+def _add_univariate_chapters(doc, paths: dict[str, str], heading_start: int = 1) -> None:
+    h = heading_start
+    _add_heading(
+        doc,
+        f"{h}. Univariate Analysis tab — models and architecture",
+        1,
+    )
+    _p(
+        doc,
+        "Tab 3 is claims-only. It does not use production, odometer, FCO/K intensity, "
+        "or other Tab 1 EXOG_COLS, and it does not train via runner.py. "
+        "Source: forecasting/pipeline/univariate.py and dashboard/univariate_views.py.",
+    )
+    _picture(doc, paths.get("uni_pipe"), 6.6)
+    _table(
+        doc,
+        ["Model", "Type", "Tab 3 role"],
+        [
+            ["Holt-Winters", "Additive exponential smoothing", "Unique to Tab 3; level + trend + optional season"],
+            ["SARIMA", "Seasonal ARIMA", "Wider order grid than Tab 1; unscaled claims"],
+            ["CNN-LSTM", "Same NumPy net as Tab 1", "UNI features; 12 CV / 22 refit epochs"],
+            ["Transformer", "Same NumPy net as Tab 1", "Same wiring as CNN-LSTM"],
+            ["N-BEATS", "Same NumPy net as Tab 1", "Same wiring as CNN-LSTM"],
+        ],
+    )
+    _p(
+        doc,
+        "Selection: one checkbox → that model. Several → lowest walk-forward RMSE "
+        "(not the Tab 1 composite rank). No inverse-MAE ensemble, no Keras path, no CM multipliers.",
+    )
+
+    _add_heading(doc, f"{h}.1 Input, features, fusion", 2)
+    _picture(doc, paths.get("uni_feat"), 6.2)
+    _p(
+        doc,
+        "Inputs: Tab 1 claims (production not required) or a monthly CSV "
+        "(Part Name, Month, Claims). Need at least 10 months and positive total claims. "
+        "UNI_FEATURE_COLS: Lag 1/2/3/12, rolling mean 3/6/12, rolling std 3/6, "
+        "Month/Quarter/Year, Trend_Index, Seasonality_Index (month-mean / global-mean). "
+        "DL windows concatenate scaled claims with these 14 columns (F about 15). "
+        "Lookback W = min(12, max(4, T//3)). Holt-Winters and SARIMA ignore UNI features.",
+    )
+
+    _add_heading(doc, f"{h}.2 Holt-Winters — layer breakdown", 2)
+    _picture(doc, paths.get("hw"), 6.2)
+    _table(
+        doc,
+        ["Stage", "What happens", "Params"],
+        [
+            ["Input", "1-D claim_count", "No MinMax"],
+            ["Preprocess", "sp = min(12, n//2); seasonal only if n >= 2*sp", "holdout 3-6 months"],
+            ["Level", "Additive TES level", "alpha in {0.1, 0.3, 0.5, 0.8}"],
+            ["Trend", "Additive slope", "beta in {0.05, 0.2, 0.4}"],
+            ["Season", "Additive yearly or omitted", "gamma in {0.1, 0.3, 0.5}"],
+            ["Fit", "ExponentialSmoothing estimated init, optimized=False", "statsmodels"],
+            ["Output", "forecast(H) clip >= 0; residual sigma for CI", "Fail -> last value"],
+        ],
+    )
+    _code(
+        doc,
+        "l_t = a (y_t - s_{t-m}) + (1-a)(l_{t-1} + b_{t-1})\n"
+        "b_t = b (l_t - l_{t-1}) + (1-b) b_{t-1}\n"
+        "s_t = g (y_t - l_{t-1} - b_{t-1}) + (1-g) s_{t-m}\n"
+        "yhat_{t+h} = l_t + h b_t + seasonal_lag\n"
+        "Grid a x b x g on holdout RMSE, then refit on full y.",
+    )
+    _p(
+        doc,
+        "Unique extras: holdout RMSE grid; sigma feeds 95% CI; alpha/beta/gamma shown in accordion 3; "
+        "no dropout/attention.",
+    )
+
+    _add_heading(doc, f"{h}.3 Univariate SARIMA", 2)
+    _p(
+        doc,
+        "Same SARIMAX engine as Tab 1 (fit_sarima) on unscaled claims. "
+        "Orders: (1,1,1), (1,1,0), (0,1,1), (2,1,1). "
+        "Seasonal: (1,1,0,12), (0,1,1,12), (1,0,1,12). "
+        "Pick lowest RMSE on a tail split; fallback seasonal-naive/mean. "
+        "Orders printed beside Holt-Winters on Tab 3.",
+    )
+
+    _add_heading(doc, f"{h}.4 CNN-LSTM, Transformer, N-BEATS on Tab 3", 2)
+    _picture(doc, paths.get("uni_dl"), 6.2)
+    _p(
+        doc,
+        "Layer stacks are identical to Tab 1 (CNN 16->8 + LSTM-32; Transformer MHA+FFN; "
+        "N-BEATS 6 polynomial blocks). Differences are wiring: UNI features, epochs 12 (CV) "
+        "and 22 (refit), no HP grid, fail -> last claim, short H padded with last step, "
+        "rank by RMSE only. See multivariate sections 3-5 for gate/attention/basis detail.",
+    )
+    _code(
+        doc,
+        "CV:  ctor(..., horizon=1, epochs=12)\n"
+        "Refit: ctor(..., horizon=H, epochs=22)\n"
+        "W = min(12, max(4, T//3))\n"
+        "CI: best +/- 1.96 * max(0.35*std(last12), 0.5*HW_sigma, 1)",
+    )
+
+    _add_heading(doc, f"{h}.5 Tab 3 UI outputs", 2)
+    _table(
+        doc,
+        ["Control", "Meaning"],
+        [
+            ["Monthly CSV", "Does not change Tab 1; Part Name / Month / Claims"],
+            ["Model checkboxes", "Empty -> all five UNI_MODELS"],
+            ["1. Overview", "Records, date span, missing months, quality status"],
+            ["2. Trend", "Claims + rolling 3/12; seasonality bars; growth/6-mo %"],
+            ["3. Results", "RMSE/MAE/MAPE rank + star; HW params; SARIMA orders"],
+            ["4. Forecast", "Best solid line, others dotted, 95% CI, 12-row table"],
+            ["5. Insights", "Trend/season/volatility/best RMSE/quality notes"],
+            ["Tab 6 PPT", "Univariate slides only if Tab 3 has been run"],
+        ],
+    )
+
+    _add_heading(doc, f"{h}.6 Univariate edge cases", 2)
+    _table(
+        doc,
+        ["Case", "Expected"],
+        [
+            ["No data", "Prompt to load Tab 1 or CSV"],
+            ["< 10 months or zero claims", "Run returns None"],
+            ["Gaps in months", "Filled with 0; status Gaps filled"],
+            ["Short series for HW season", "seasonal=None; gamma unused"],
+            ["DL too few windows", "Naive last claim"],
+            ["One model checked", "That model is best"],
+            ["Empty checkboxes", "All five models"],
+            ["Winner vs Tab 1", "Often different — do not mix rankings"],
+        ],
+    )
+
+
+def build_uni_docx(paths: dict[str, str]) -> None:
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+    style.font.color.rgb = RGBColor(0x1A, 0x1A, 0x2E)
+    doc.add_heading("Univariate Forecasting Models — Complete Architecture", 0)
+    _p(
+        doc,
+        "Gradio Tab 3. Univariate Analysis: Holt-Winters, SARIMA, CNN-LSTM, "
+        "Transformer, and N-BEATS on claims-only features. "
+        "Companion markdown: docs/UNIVARIATE_MODEL_ARCHITECTURE.md.",
+    )
+    _add_univariate_chapters(doc, paths, heading_start=1)
+    os.makedirs(os.path.dirname(UNI_DOCX_PATH), exist_ok=True)
+    doc.save(UNI_DOCX_PATH)
+    print("Wrote", UNI_DOCX_PATH)
+
+
 def main():
     paths = generate_diagrams()
     print("Diagrams in", DIAG_DIR)
-    try:
-        build_docx(paths)
-    except ImportError:
-        print("python-docx missing — installing is required for .docx")
-        raise
+    build_docx(paths)
+    build_uni_docx(paths)
 
 
 if __name__ == "__main__":
