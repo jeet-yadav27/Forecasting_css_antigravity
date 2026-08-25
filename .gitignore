@@ -1,0 +1,64 @@
+# ===========================================================================
+# Python
+# ===========================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+*.cover
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===========================================================================
+# Virtual environment
+# ===========================================================================
+venv/
+env/
+ENV/
+.venv/
+
+# Offline wheels (large; keep locally / copy for air-gapped install)
+packages/*.whl
+packages/*.tar.gz
+!packages/README.txt
+packages-py313/*.whl
+packages-py313/*.tar.gz
+!packages-py313/README.txt
+packages_offline.zip
+packages_offline_py313.zip
+
+# ===========================================================================
+# Project-specific generated outputs
+# ===========================================================================
+warranty_forecast_dashboard.html
+*_dashboard.html
+outputs/
+run_log.txt
+
+# Root-level CSV duplicate (canonical copy lives in data/)
+/Test 1.csv
+
+# ===========================================================================
+# IDEs & OS
+# ===========================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

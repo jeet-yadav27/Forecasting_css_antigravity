@@ -1,0 +1,14 @@
+# Offline / restricted-network install (Python 3.14, Windows amd64)
+# TensorFlow is omitted: no official wheel for Python 3.14.
+# Core models (CNN-LSTM NumPy, N-BEATS, Transformer, SARIMA) work without it.
+pandas>=2.0.0
+numpy>=1.24.0
+plotly>=5.18.0
+scikit-learn>=1.3.0
+statsmodels>=0.14.0
+python-dateutil>=2.8.2
+gradio>=4.0.0
+openpyxl>=3.1.0
+tqdm>=4.66.0
+python-pptx>=1.0.0
+kaleido>=0.2.1
