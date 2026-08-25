@@ -38,9 +38,13 @@ packages/*.tar.gz
 !packages/README.txt
 packages-py313/*.whl
 packages-py313/*.tar.gz
+packages-py313/**/*.whl
+packages-py313/**/*.tar.gz
 !packages-py313/README.txt
+!packages-py313/**/MANIFEST.txt
 packages_offline.zip
 packages_offline_py313.zip
+_release_assets/
 
 # ===========================================================================
 # Project-specific generated outputs

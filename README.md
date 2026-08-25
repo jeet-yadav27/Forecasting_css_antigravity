@@ -56,6 +56,27 @@ Dashboard: **http://localhost:7860**
 
 ---
 
+## Offline install (Python 3.13, Windows)
+
+Wheels are **not** in git. Download **all three** zips from the GitHub Release
+[py313-offline-wheels](https://github.com/jeet-yadav27/Forecasting_css_antigravity/releases/tag/py313-offline-wheels):
+
+| Asset | Extract into |
+|---|---|
+| `packages-py313-part1.zip` | `packages-py313\part1\` |
+| `packages-py313-part2.zip` | `packages-py313\part2\` |
+| `packages-py313-part3.zip` | `packages-py313\part3\` |
+
+Then from the project root:
+
+```bat
+install_offline_py313.bat
+```
+
+See `packages-py313/README.txt` for details.
+
+---
+
 ## Feature Engineering
 
 Claims are aggregated by **Process Date** (claim month). Features include:

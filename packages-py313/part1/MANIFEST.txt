@@ -1,0 +1,5 @@
+# packages-py313 part1
+# 1 files, 334.9 MB
+# Extract this zip into packages-py313\ so this folder sits next to part2/part3.
+
+tensorflow-2.21.0-cp313-cp313-win_amd64.whl
