@@ -51,6 +51,9 @@ from forecasting.dashboard.builder import (
     make_12m_forecast_figure,
     make_countermeasure_impact_figure,
     make_baseline_vs_adjusted_figure,
+    make_cm_analysis_figure,
+    make_cm_production_figure,
+    make_cm_savings_html,
     make_annotated_results_figure,
     make_forecast_df,
     make_best_params_df,
@@ -925,10 +928,12 @@ def build_interactive_app(
                     )
                     hw = res.get("holt_params") or {}
                     sar = res.get("sarima_params") or {}
+                    _rmse_v = hw.get("holdout_rmse")
+                    _rmse_str = f"{float(_rmse_v):.3f}" if _rmse_v is not None and np.isfinite(float(_rmse_v)) else "—"
                     hw_txt = (
                         f"**Holt-Winters best params** — α={hw.get('alpha')} · "
                         f"β={hw.get('beta')} · γ={hw.get('gamma')} "
-                        f"(holdout RMSE {hw.get('holdout_rmse', float('nan')):.3f}).  \n"
+                        f"(holdout RMSE {_rmse_str}).  \n"
                         f"**SARIMA** order={sar.get('order')} seasonal={sar.get('seasonal_order')}.  \n"
                         f"**Best model (lowest RMSE):** **{res.get('best_model')}**"
                     )
@@ -1211,7 +1216,102 @@ def build_interactive_app(
                     outputs=[cm_kpi, cm_impact, cm_base, cm_table, cm_file],
                 )
 
-            # ── 4. Annotated walk-forward (reference-style) ───────────────
+                # ── CM Engine Analysis panel (new production-adjusted model) ──
+                with gr.Accordion(
+                    "🔧 CM Engine Analysis (Production-Adjusted Baseline)",
+                    open=True,
+                ):
+                    gr.Markdown(
+                        "**Production-adjusted countermeasure model.** "
+                        "Identifies peak FCOK months, computes adjusted production "
+                        f"baseline (`avg_prod − avg_claims`), and projects claims "
+                        f"across the **{WARRANTY_MONTHS}-month warranty window**. "
+                        "Factor = **1.0** when reduction is known (full CM effectiveness, no softening)."
+                    )
+                    with gr.Row():
+                        cm_eng_part_dd = gr.Dropdown(
+                            choices=[], label="Trained part", interactive=True,
+                            elem_id="cm-eng-part-dd",
+                        )
+                        cm_eng_refresh_btn = gr.Button(
+                            "🔄 Refresh CM Engine Analysis", variant="primary",
+                        )
+                    cm_eng_savings = gr.HTML(
+                        value="<i>Train a part with CM enabled to see the analysis.</i>",
+                        label="Summary",
+                    )
+                    with gr.Row():
+                        cm_eng_fig = gr.Plot(label="CM Engine — 4-Panel Analysis")
+                        cm_eng_prod_fig = gr.Plot(label="Production Trajectory")
+                    cm_eng_table = gr.Dataframe(
+                        label="Month-by-month comparison table",
+                        interactive=False, wrap=True,
+                        elem_id="cm-eng-table",
+                    )
+                    cm_eng_file = gr.File(label="Download comparison CSV")
+
+                def _run_cm_engine(part):
+                    """Refresh the CM Engine Analysis panel from the stored result."""
+                    trained = sorted(state["results"].keys())
+                    part_upd = gr.update(
+                        choices=trained,
+                        value=part if part in trained else (trained[0] if trained else None),
+                    )
+                    if not part or part not in state["results"]:
+                        e = _empty_fig("Train a part with CM enabled first.")
+                        return (
+                            part_upd,
+                            "<i>Train a part with CM enabled to see the analysis.</i>",
+                            e, e, pd.DataFrame(), None,
+                        )
+                    r = state["results"].get(part, {})
+                    cm_analysis = r.get("cm_analysis")
+                    if not cm_analysis:
+                        e = _empty_fig("No CM analysis stored — enable CM and retrain.")
+                        return (
+                            part_upd,
+                            "<i>Enable CM (in the upload panel) and retrain to see analysis.</i>",
+                            e, e, pd.DataFrame(), None,
+                        )
+                    fig4 = _safe_fig(make_cm_analysis_figure, cm_analysis)
+                    fig_prod = _safe_fig(make_cm_production_figure, cm_analysis)
+                    savings_html = make_cm_savings_html(cm_analysis)
+                    comp = cm_analysis.get("comparison", {})
+                    comp_df = comp.get("comparison_df", pd.DataFrame())
+                    # Export comparison CSV
+                    tmp = None
+                    if not comp_df.empty:
+                        import tempfile as _tf
+                        _f = _tf.NamedTemporaryFile(
+                            mode="w", suffix=".csv",
+                            prefix=f"cm_engine_{part}_",
+                            delete=False, encoding="utf-8",
+                        )
+                        comp_df.to_csv(_f.name, index=False)
+                        _f.close()
+                        tmp = _f.name
+                    return part_upd, savings_html, fig4, fig_prod, comp_df, tmp
+
+                cm_eng_refresh_btn.click(
+                    fn=_run_cm_engine,
+                    inputs=[cm_eng_part_dd],
+                    outputs=[
+                        cm_eng_part_dd, cm_eng_savings,
+                        cm_eng_fig, cm_eng_prod_fig,
+                        cm_eng_table, cm_eng_file,
+                    ],
+                )
+                cm_eng_part_dd.change(
+                    fn=_run_cm_engine,
+                    inputs=[cm_eng_part_dd],
+                    outputs=[
+                        cm_eng_part_dd, cm_eng_savings,
+                        cm_eng_fig, cm_eng_prod_fig,
+                        cm_eng_table, cm_eng_file,
+                    ],
+                )
+
+
             with gr.Tab("5. Annotated Walk-Forward"):
                 gr.Markdown("""
 ### Reference-style last-6-month evaluation

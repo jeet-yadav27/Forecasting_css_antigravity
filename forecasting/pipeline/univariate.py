@@ -261,13 +261,20 @@ def _resolve_uni_models(selected: list[str] | None) -> list[str]:
 
 def _walk_forward_1step(claims: np.ndarray, feats: np.ndarray, n_folds: int,
                         model_names: list[str] | None = None) -> dict:
-    """1-step OOS preds per selected model for ranking (up to 6 test months)."""
+    """1-step OOS preds per selected model for ranking (up to 6 test months).
+
+    DL models (CNN-LSTM, Transformer, N-BEATS) are pre-filled with a naive
+    fallback at the start of every fold so ``len(oos[m]) == len(actual)``
+    always holds.  A successful training run overwrites the fallback in-place.
+    """
     y = np.asarray(claims, dtype=float).ravel()
     T = len(y)
     names = _resolve_uni_models(model_names)
     n_folds = min(6, max(2, T - 8))
     oos = {m: [] for m in names}
     actual = []
+    dl_names = [m for m in ("CNN-LSTM", "Transformer", "N-BEATS") if m in names]
+
     for k in range(n_folds):
         val_idx = T - n_folds + k
         train_end = val_idx
@@ -276,6 +283,7 @@ def _walk_forward_1step(claims: np.ndarray, feats: np.ndarray, n_folds: int,
         actual.append(float(y[val_idx]))
         tr = y[:train_end]
 
+        # ── Statistical models ───────────────────────────────────────────
         if "Holt-Winters" in names:
             try:
                 hw_fc, _, _ = _holt_winters_forecast(tr, 1)
@@ -290,9 +298,16 @@ def _walk_forward_1step(claims: np.ndarray, feats: np.ndarray, n_folds: int,
             except Exception:
                 oos["SARIMA"].append(float(tr[-1]))
 
-        dl_names = [m for m in ("CNN-LSTM", "Transformer", "N-BEATS") if m in names]
+        # ── Deep-learning models: pre-fill fallback first ────────────────
+        # This guarantees len(oos[name]) == len(actual) regardless of
+        # whether training succeeds or data is too short.
+        fold_idx = len(actual) - 1   # index of the value just appended
+        for name in dl_names:
+            oos[name].append(float(tr[-1]))
+
         if not dl_names:
             continue
+
         try:
             csc = MinMaxScaler()
             esc = MinMaxScaler()
@@ -323,17 +338,14 @@ def _walk_forward_1step(claims: np.ndarray, feats: np.ndarray, n_folds: int,
                     for fut in as_completed(futures):
                         try:
                             dl_name, val = fut.result()
-                            oos[dl_name].append(val)
+                            # Overwrite the pre-filled fallback with the real prediction
+                            oos[dl_name][fold_idx] = val
                         except Exception:
-                            dl_name = futures[fut]
-                            oos[dl_name].append(float(tr[-1]))
+                            pass  # keep the pre-filled fallback
             else:
-                for name in dl_names:
-                    oos[name].append(float(tr[-1]))
+                pass # fallbacks already pre-filled above
         except Exception:
-            for name in dl_names:
-                if len(oos[name]) < len(actual):
-                    oos[name].append(float(tr[-1]))
+            pass  # fallbacks already pre-filled above
 
     actual = np.asarray(actual, dtype=float)
     metrics = {}

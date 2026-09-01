@@ -430,11 +430,33 @@ def apply_cm_to_forecast(
     future_periods: list,
     future_production: np.ndarray | None = None,
     hist_production: np.ndarray | None = None,
+    hist_claims: np.ndarray | None = None,
+    hist_periods=None,
     use_peak_fcok: bool = True,
     sensitivity: float = 1.0,
+    prod_adjustment_mode: str = "share",
+    engine_factor: float = 1.0,
+    cost_per_claim: float | None = None,
+    cm_registry: dict | None = None,
 ) -> dict:
     """
     Reduce future claims after a countermeasure date, weighted by production.
+
+    Two modes are supported via *prod_adjustment_mode*:
+
+    ``'share'`` (default / legacy)
+        Reduce claims by ``reduction_pct`` scaled by FCO/K share and
+        relative future production weights. Original behaviour preserved.
+
+    ``'offset'`` (new — production-adjusted baseline engine)
+        Delegates to :mod:`forecasting.countermeasure_engine` which:
+        • Identifies peak FCOK months by claim count.
+        • Computes avg_prod of those months and derives adj_prod =
+          avg_prod − avg_peak_claims.
+        • Builds a declining future-production sequence within the
+          3-year warranty window.
+        • Uses a production-weighted claim-rate model (factor=engine_factor).
+        • Returns a full comparison dict with savings estimate.
 
     After the CM implementation month, forecast claims are cut by
     ``reduction_pct``, scaled by relative future production so high-volume
@@ -460,9 +482,76 @@ def apply_cm_to_forecast(
         "warranty_months": WARRANTY_MONTHS,
         "post_cm_mask": np.zeros(H, dtype=float),
         "prod_weight": np.ones(H, dtype=float),
+        "engine_result": None,
     }
     if not cm_enabled:
         return empty
+
+    # ── New offset mode: delegate to countermeasure_engine ───────────────
+    if prod_adjustment_mode == "offset":
+        from forecasting.countermeasure_engine import run_cm_analysis
+
+        prod_series = (
+            hist_production
+            if hist_production is not None and len(hist_production)
+            else np.ones(1)
+        )
+        claims_series = (
+            hist_claims
+            if hist_claims is not None and len(hist_claims)
+            else np.zeros(len(prod_series))
+        )
+        periods = hist_periods if hist_periods is not None else pd.period_range(
+            end=pd.Period.now("M"), periods=len(prod_series), freq="M"
+        )
+
+        eng = run_cm_analysis(
+            raw=raw,
+            part=part,
+            baseline_forecast=baseline,
+            future_periods=future_periods,
+            production_series=prod_series,
+            monthly_periods=periods,
+            hist_claims=claims_series,
+            cm_enabled=cm_enabled,
+            cm_registry=cm_registry,
+            cm_date=cm_month,
+            cost_per_claim=cost_per_claim,
+        )
+
+        comp = eng["comparison"]
+        cm_adj = eng["cm_forecast"]
+        monthly_red = comp["monthly_reduction"]
+        return {
+            "original": baseline,
+            "adjusted": cm_adj,
+            "monthly_reduction": monthly_red,
+            "cumulative_reduction": comp["cumulative_reduction"],
+            "improvement_pct": comp["total_pct_reduction"],
+            "fcok_share": np.zeros(H, dtype=float),
+            "reduction_pct": comp["total_pct_reduction"],
+            "selected_fcok": [],
+            "cm_enabled": True,
+            "cm_month": cm_month,
+            "peak_fcok": (
+                str(eng["peak_fcok_df"]["fcok_month"].iloc[0])
+                if not eng["peak_fcok_df"].empty else None
+            ),
+            "warranty_months": WARRANTY_MONTHS,
+            "post_cm_mask": np.ones(H, dtype=float),
+            "prod_weight": eng["cm_production"][:H] / max(
+                float(np.nanmean(eng["cm_production"])), 1.0
+            ),
+            "engine_result": eng,
+            "cost_savings": comp["cost_savings"],
+            "total_cost_savings": comp["total_cost_savings"],
+            "avg_peak_prod": eng["avg_peak_prod"],
+            "avg_peak_claims": eng["avg_peak_claims"],
+            "adj_prod": eng["adj_prod"],
+            "cm_production": eng["cm_production"],
+            "peak_fcok_df": eng["peak_fcok_df"],
+            "engine_message": eng["message"],
+        }
 
     red = max(0.0, min(100.0, float(reduction_pct))) / 100.0
     sens = max(0.5, float(sensitivity))
@@ -590,4 +679,75 @@ def forecast_economics(
         "cost_per_claim": cost_per_claim,
         "forecast_claim_cost": forecast_claim_cost,
         "horizon": H,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Production-weighted CM reduction helper (standalone)
+# ---------------------------------------------------------------------------
+
+def production_weighted_cm_reduction(
+    baseline_forecast: np.ndarray,
+    future_production: np.ndarray,
+    hist_claims: np.ndarray,
+    hist_production: np.ndarray,
+    *,
+    warranty_months: int = WARRANTY_MONTHS,
+) -> dict:
+    """
+    Apply a production-weighted claim reduction to the baseline forecast.
+
+    Claims drop in proportion to the adjusted production exposure —
+    no factor is applied, because the actual reduction magnitude is unknown.
+    The production change alone drives the post-CM claim projection.
+
+    Parameters
+    ----------
+    baseline_forecast : np.ndarray
+        Original monthly claim forecast.
+    future_production : np.ndarray
+        Post-CM adjusted future production volumes.
+    hist_claims : np.ndarray
+        Historical monthly claim counts.
+    hist_production : np.ndarray
+        Historical monthly production volumes.
+    warranty_months : int
+        Warranty window (for length alignment).
+
+    Returns
+    -------
+    dict
+        ``adjusted`` (np.ndarray), ``monthly_reduction``, ``improvement_pct``,
+        ``hist_rate``, ``prod_weights``.
+    """
+    from forecasting.countermeasure_engine import compute_cm_forecast
+
+    adjusted = compute_cm_forecast(
+        baseline_forecast=baseline_forecast,
+        cm_adjusted_production=future_production,
+        hist_production=hist_production,
+        hist_claims=hist_claims,
+        warranty_months=warranty_months,
+    )
+    baseline = np.asarray(baseline_forecast, dtype=float).ravel()
+    H = min(len(baseline), len(adjusted))
+    monthly_red = np.clip(baseline[:H] - adjusted[:H], 0.0, None)
+    total = float(baseline[:H].sum()) + 1e-9
+
+    # Historical rate
+    hp = np.asarray(hist_production, dtype=float).ravel()
+    hc = np.asarray(hist_claims, dtype=float).ravel()
+    valid = np.isfinite(hp) & (hp > 0) & np.isfinite(hc)
+    hist_rate = float(np.nanmean(hc[valid] / hp[valid])) if valid.any() else 0.0
+
+    fp = np.asarray(future_production, dtype=float).ravel()[:H]
+    mean_fp = float(np.nanmean(fp)) if np.any(np.isfinite(fp)) else 1.0
+    prod_weights = np.clip(fp / max(mean_fp, 1.0), 0.5, 2.0)
+
+    return {
+        "adjusted": adjusted[:H],
+        "monthly_reduction": monthly_red,
+        "improvement_pct": float(monthly_red.sum() / total * 100.0),
+        "hist_rate": hist_rate,
+        "prod_weights": prod_weights,
     }

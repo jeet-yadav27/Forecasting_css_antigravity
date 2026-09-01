@@ -740,7 +740,9 @@ def train_uploaded_part(
         compute_cpv_claim_ratio,
         estimate_cm_reduction_pct,
         forecast_economics,
+        production_weighted_cm_reduction,
     )
+    from forecasting.countermeasure_engine import run_cm_analysis
 
     user_prod = production is not None and len(np.asarray(production).ravel()) > 0
     monthly = build_monthly_series(
@@ -821,6 +823,16 @@ def train_uploaded_part(
             }
 
     baseline = np.asarray(result.get("best_forecast", result["ensemble_raw"]), dtype=float).copy()
+
+    # ── Production-adjusted CM engine (pure rate × production, no factor) ──
+    # The forecast reduction is determined solely by the decrease in
+    # production exposure (avg_prod - avg_peak_claims). No effectiveness
+    # factor is applied because the actual reduction magnitude is unknown.
+    # Cost per claim from historical economics (used for savings estimate)
+    cost_pc = econ.get("avg_cpv", None)
+    if not (cost_pc and np.isfinite(cost_pc) and cost_pc > 0):
+        cost_pc = None
+
     cm_sim = apply_cm_to_forecast(
         baseline,
         raw,
@@ -831,11 +843,32 @@ def train_uploaded_part(
         future_periods=result["future_periods"],
         future_production=fut_prod if user_prod else None,
         hist_production=prod if user_prod else None,
+        hist_claims=claims,
+        hist_periods=result["monthly"]["period"],
         use_peak_fcok=True,
         sensitivity=1.25,
+        prod_adjustment_mode="offset",
+        engine_factor=1.0,
+        cost_per_claim=cost_pc,
     )
     cm_sim["reduction_source"] = red_meta.get("source")
     cm_sim["reduction_note"] = red_meta.get("note", "")
+
+    # ── Run full CM analysis (with-vs-without comparison) ──────────────────
+    cm_analysis = run_cm_analysis(
+        raw=raw,
+        part=part,
+        baseline_forecast=baseline,
+        future_periods=result["future_periods"],
+        production_series=prod,
+        monthly_periods=result["monthly"]["period"],
+        hist_claims=claims,
+        cm_enabled=cm_enabled,
+        cm_date=cm_month,
+        cost_per_claim=cost_pc,
+    )
+    result["cm_analysis"] = cm_analysis
+
     result["cm_sim"] = cm_sim
     result["has_cm"] = bool(cm_enabled and cm_sim.get("cm_enabled"))
     result["best_forecast_raw"] = baseline.copy()

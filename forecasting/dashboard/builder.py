@@ -468,8 +468,283 @@ def make_baseline_vs_adjusted_figure(sim: dict, future_periods) -> go.Figure:
 
 
 # ---------------------------------------------------------------------------
-# Overview / summary (preserved + extended)
+# NEW: Countermeasure Engine Analysis Figures
 # ---------------------------------------------------------------------------
+
+def make_cm_analysis_figure(cm_analysis: dict) -> go.Figure:
+    """
+    4-panel CM analysis chart:
+      Top-left  : With vs Without CM forecast (lines)
+      Top-right : Monthly claim reduction (bar)
+      Bottom-left: Cumulative claim reduction (area)
+      Bottom-right: CM-adjusted future production trajectory
+    """
+    if not cm_analysis or not cm_analysis.get("cm_active"):
+        # CM inactive — show a simple info placeholder
+        fig = go.Figure()
+        fig.add_annotation(
+            text="No countermeasure active — enable CM to view analysis.",
+            xref="paper", yref="paper", x=0.5, y=0.5,
+            showarrow=False, font=dict(size=14, color=_MUTED),
+        )
+        return _style(fig, "CM Analysis (Inactive)")
+
+    comp = cm_analysis.get("comparison", {})
+    baseline = np.asarray(comp.get("baseline", []), dtype=float)
+    cm_fc = np.asarray(comp.get("cm_forecast", []), dtype=float)
+    monthly_red = np.asarray(comp.get("monthly_reduction", []), dtype=float)
+    cum_red = np.asarray(comp.get("cumulative_reduction", []), dtype=float)
+    cm_prod = np.asarray(cm_analysis.get("cm_production", []), dtype=float)
+    comp_df = comp.get("comparison_df", pd.DataFrame())
+
+    months = (
+        comp_df["Month"].tolist()
+        if "Month" in comp_df.columns
+        else [str(i + 1) for i in range(len(baseline))]
+    )
+    H = len(months)
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=(
+            "With vs Without CM — Claims Forecast",
+            "Monthly Claim Reduction",
+            "Cumulative Reduction",
+            "CM-Adjusted Future Production",
+        ),
+        vertical_spacing=0.14,
+        horizontal_spacing=0.10,
+    )
+
+    # ── Panel 1: With vs Without ─────────────────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=months, y=baseline[:H],
+        name="Without CM", mode="lines+markers",
+        line=dict(color=_A4, width=2.5),
+        marker=dict(size=6),
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=months, y=cm_fc[:H],
+        name="With CM", mode="lines+markers",
+        line=dict(color=_A2, width=2.5, dash="dash"),
+        marker=dict(size=6, symbol="diamond"),
+        fill="tonexty",
+        fillcolor="rgba(4,120,87,0.10)",
+    ), row=1, col=1)
+
+    # ── Panel 2: Monthly reduction bar ───────────────────────────────────
+    pct_red = comp.get("pct_reduction", np.zeros(H))
+    if not isinstance(pct_red, np.ndarray):
+        pct_red = np.asarray(pct_red, dtype=float)
+    fig.add_trace(go.Bar(
+        x=months, y=monthly_red[:H],
+        name="Monthly Reduction",
+        marker_color=_A3,
+        opacity=0.80,
+        text=[f"{p:.1f}%" for p in pct_red[:H]],
+        textposition="outside",
+        textfont=dict(size=9, color=_TXT),
+    ), row=1, col=2)
+
+    # ── Panel 3: Cumulative reduction area ───────────────────────────────
+    fig.add_trace(go.Scatter(
+        x=months, y=cum_red[:H],
+        name="Cumulative Reduction",
+        mode="lines",
+        line=dict(color=_A1, width=2.5),
+        fill="tozeroy",
+        fillcolor="rgba(29,78,216,0.12)",
+    ), row=2, col=1)
+
+    # ── Panel 4: Production trajectory ───────────────────────────────────
+    if len(cm_prod) > 0:
+        avg_pp = float(cm_analysis.get("avg_peak_prod", 0))
+        fig.add_trace(go.Scatter(
+            x=months[:len(cm_prod)], y=cm_prod[:H],
+            name="CM Production", mode="lines+markers",
+            line=dict(color="#7C3AED", width=2),
+            marker=dict(size=5),
+        ), row=2, col=2)
+        if avg_pp > 0:
+            fig.add_hline(
+                y=avg_pp, line_dash="dot",
+                line_color=_A4, line_width=1.5,
+                annotation_text=f"Avg Peak Prod: {avg_pp:,.0f}",
+                annotation_font_color=_A4,
+                annotation_font_size=9,
+                row=2, col=2,
+            )
+
+    fig.update_layout(
+        **_LAYOUT,
+        title_text="<b>Countermeasure Engine Analysis</b>",
+        title_font=dict(size=15, color=_TXT),
+        height=600,
+        margin=dict(l=50, r=30, t=80, b=50),
+        font=dict(color=_TXT, size=10, family="DM Sans, Inter, sans-serif"),
+        legend=dict(
+            bgcolor="rgba(255,255,255,0.95)",
+            font=dict(size=9, color=_TXT),
+            orientation="h", y=-0.07,
+        ),
+        showlegend=True,
+    )
+    for ax in fig.layout:
+        if ax.startswith("xaxis") or ax.startswith("yaxis"):
+            fig.layout[ax].update(
+                tickfont=dict(color=_TXT, size=9),
+                title_font=dict(color=_TXT, size=10),
+                gridcolor="rgba(0,0,0,0.06)",
+                showgrid=True,
+            )
+    return fig
+
+
+def make_cm_production_figure(cm_analysis: dict) -> go.Figure:
+    """
+    Line chart showing how future production evolves after the CM:
+    avg_peak_prod (flat baseline), adj_prod start, and the declining CM
+    production sequence over the warranty window.
+    """
+    if not cm_analysis or not cm_analysis.get("cm_active"):
+        fig = go.Figure()
+        fig.add_annotation(
+            text="CM not active.",
+            xref="paper", yref="paper", x=0.5, y=0.5,
+            showarrow=False, font=dict(size=13, color=_MUTED),
+        )
+        return _style(fig, "CM Production Trajectory (Inactive)")
+
+    cm_prod = np.asarray(cm_analysis.get("cm_production", []), dtype=float)
+    avg_pp = float(cm_analysis.get("avg_peak_prod", 0))
+    adj_start = float(cm_analysis.get("adj_prod", 0))
+    comp_df = cm_analysis.get("comparison", {}).get("comparison_df", pd.DataFrame())
+    months = (
+        comp_df["Month"].tolist()
+        if "Month" in comp_df.columns and len(comp_df) == len(cm_prod)
+        else [f"M+{i + 1}" for i in range(len(cm_prod))]
+    )
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=months, y=cm_prod,
+        name="CM-Adjusted Production",
+        mode="lines+markers",
+        line=dict(color="#7C3AED", width=2.5),
+        fill="tozeroy",
+        fillcolor="rgba(124,58,237,0.08)",
+    ))
+    if avg_pp > 0:
+        fig.add_hline(
+            y=avg_pp, line_dash="dot", line_color=_A4, line_width=1.5,
+            annotation_text=f"Avg Peak Production: {avg_pp:,.0f}",
+            annotation_font_color=_A4, annotation_font_size=10,
+        )
+    if adj_start > 0:
+        fig.add_hline(
+            y=adj_start, line_dash="dashdot", line_color=_A2, line_width=1.5,
+            annotation_text=f"Adjusted Baseline: {adj_start:,.0f}",
+            annotation_font_color=_A2, annotation_font_size=10,
+        )
+    return _style(fig, "CM-Adjusted Future Production Trajectory", height=380)
+
+
+def make_cm_savings_html(cm_analysis: dict) -> str:
+    """
+    Returns an HTML savings summary card for the CM analysis panel.
+    Shows: total claim reduction, % reduction, estimated cost savings.
+    """
+    if not cm_analysis or not cm_analysis.get("cm_active"):
+        return (
+            "<div style='padding:16px;background:#f8f9fa;border-radius:8px;"
+            "border-left:4px solid #9CA3AF;font-family:Inter,sans-serif;'>"
+            "<b style='color:#6B7280'>No countermeasure active.</b>"
+            " Enable CM to see savings analysis.</div>"
+        )
+
+    comp = cm_analysis.get("comparison", {})
+    total_base = comp.get("total_baseline_claims", 0)
+    total_cm = comp.get("total_cm_claims", 0)
+    total_red = comp.get("total_reduction", 0)
+    total_pct = comp.get("total_pct_reduction", 0)
+    cost_sav = comp.get("total_cost_savings")
+    avg_pp = cm_analysis.get("avg_peak_prod", 0)
+    avg_pc = cm_analysis.get("avg_peak_claims", 0)
+    adj_prod = cm_analysis.get("adj_prod", 0)
+    peak_df = cm_analysis.get("peak_fcok_df", pd.DataFrame())
+    factor = cm_analysis.get("factor", 1.0)
+    msg = cm_analysis.get("message", "")
+
+    peak_rows = ""
+    if not peak_df.empty:
+        for _, row in peak_df.iterrows():
+            peak_rows += (
+                f"<tr><td style='padding:3px 8px'>{row['rank']}</td>"
+                f"<td style='padding:3px 8px'>{row['fcok_month']}</td>"
+                f"<td style='padding:3px 8px'>{int(row['claim_count']):,}</td></tr>"
+            )
+
+    cost_html = ""
+    if cost_sav is not None and np.isfinite(cost_sav):
+        cost_html = (
+            f"<div style='margin-top:10px;padding:8px 12px;"
+            f"background:#ECFDF5;border-radius:6px;border-left:3px solid #047857;'>"
+            f"<b style='color:#047857'>Estimated Warranty Cost Savings:</b> "
+            f"<span style='font-size:1.15em;font-weight:700;color:#047857'>"
+            f"{cost_sav:,.2f}</span></div>"
+        )
+
+    peak_table = ""
+    if peak_rows:
+        peak_table = (
+            "<table style='border-collapse:collapse;font-size:0.9em;margin-top:6px;'>"
+            "<thead><tr style='background:#E0E7FF'>"
+            "<th style='padding:4px 8px'>Rank</th>"
+            "<th style='padding:4px 8px'>FCOK Month</th>"
+            "<th style='padding:4px 8px'>Claims</th></tr></thead>"
+            f"<tbody>{peak_rows}</tbody></table>"
+        )
+
+    return f"""
+<div style='padding:18px;background:#FFFFFF;border-radius:10px;
+            border:1px solid #E2E8F0;font-family:Inter,sans-serif;
+            box-shadow:0 2px 8px rgba(0,0,0,0.06);'>
+  <h3 style='margin:0 0 12px 0;color:#1D4ED8;font-size:1.05em;'>
+    🔧 Countermeasure Engine — Analysis Summary
+  </h3>
+  <div style='display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;'>
+    <div style='padding:10px;background:#EFF6FF;border-radius:6px;text-align:center;'>
+      <div style='font-size:0.78em;color:#6B7280'>Baseline Claims (12m)</div>
+      <div style='font-size:1.3em;font-weight:700;color:#1D4ED8'>{total_base:,.0f}</div>
+    </div>
+    <div style='padding:10px;background:#ECFDF5;border-radius:6px;text-align:center;'>
+      <div style='font-size:0.78em;color:#6B7280'>CM Claims (12m)</div>
+      <div style='font-size:1.3em;font-weight:700;color:#047857'>{total_cm:,.0f}</div>
+    </div>
+    <div style='padding:10px;background:#FFF7ED;border-radius:6px;text-align:center;'>
+      <div style='font-size:0.78em;color:#6B7280'>Total Reduction</div>
+      <div style='font-size:1.3em;font-weight:700;color:#B45309'>{total_red:,.0f}</div>
+    </div>
+    <div style='padding:10px;background:#FEF2F2;border-radius:6px;text-align:center;'>
+      <div style='font-size:0.78em;color:#6B7280'>% Reduction</div>
+      <div style='font-size:1.3em;font-weight:700;color:#B91C1C'>{total_pct:.1f}%</div>
+    </div>
+  </div>
+  <div style='margin-bottom:10px;font-size:0.88em;'>
+    <b>Production Baseline:</b> Avg Peak Prod = {avg_pp:,.0f} &nbsp;|&nbsp;
+    Avg Peak Claims = {avg_pc:,.1f} &nbsp;|&nbsp;
+    <b>Adj. Prod = {adj_prod:,.0f}</b> &nbsp;|&nbsp;
+    Factor = <b>{factor:.2f}</b>
+  </div>
+  {peak_table}
+  {cost_html}
+  <div style='margin-top:10px;font-size:0.82em;color:#6B7280;font-style:italic;'>
+    {msg}
+  </div>
+</div>
+"""
+
+
 
 def make_overview_figure(results: list[dict]) -> go.Figure:
     fig = go.Figure()
